@@ -20,8 +20,8 @@ pikpak = PikPakClient(
 
 # Regex para detectar magnet links e URLs HTTP(S)
 MAGNET_RE = re.compile(r"magnet:\?xt=urn:[a-zA-Z0-9]+:[a-zA-Z0-9]{32,}", re.IGNORECASE)
-URL_RE = re.compile(r"https?://[^\s>]+", re.IGNORECASE)
-ED2K_RE = re.compile(r"ed2k://[^\s>]+", re.IGNORECASE)
+URL_RE    = re.compile(r"https?://[^\s>]+", re.IGNORECASE)
+ED2K_RE   = re.compile(r"ed2k://[^\s>]+", re.IGNORECASE)
 
 
 def extract_links(text: str) -> list[str]:
@@ -45,11 +45,12 @@ async def handle_message(event, say, client):
     if not links:
         return  # Mensagem normal, ignora
 
-    channel = event["channel"]
+    channel   = event["channel"]
     thread_ts = event.get("thread_ts") or event["ts"]
 
+    # Confirmação imediata
     await say(
-        text=f":arrows_counterclockwise: Recebi {len(links)} link(s). Acionando PikPak...",
+        text=f":arrows_counterclockwise: Recebi {len(links)} link(s). Acionando PikPak e aguardando download...",
         channel=channel,
         thread_ts=thread_ts,
     )
@@ -58,23 +59,27 @@ async def handle_message(event, say, client):
     for link in links:
         try:
             task = await pikpak.offline_download(link)
-            file_id = task.get("id", "")
-            name = task.get("name", link[:60])
-            results.append({"name": name, "file_id": file_id, "status": "ok", "link": link})
+            results.append({**task, "link": link})
         except Exception as exc:
-            results.append({"name": link[:60], "file_id": "", "status": "error", "error": str(exc), "link": link})
+            results.append({"name": link[:80], "file_id": "", "task_id": "", "status": "error", "error": str(exc), "link": link})
 
     # Monta resposta consolidada
     lines = []
     for r in results:
-        if r["status"] == "ok":
-            share_url = await pikpak.get_share_link(r["file_id"]) if r["file_id"] else ""
+        name = r.get("name", r["link"][:80])
+        status = r.get("status", "error")
+
+        if status == "complete" and r.get("file_id"):
+            share_url = await pikpak.get_share_link(r["file_id"])
             if share_url:
-                lines.append(f":white_check_mark: *{r['name']}*\n{share_url}")
+                lines.append(f":white_check_mark: *{name}*\n{share_url}")
             else:
-                lines.append(f":hourglass_flowing_sand: *{r['name']}* — download offline iniciado no PikPak.")
+                lines.append(f":hourglass_flowing_sand: *{name}* — download concluído no PikPak (share link indisponível).")
+        elif status == "timeout":
+            lines.append(f":hourglass: *{name}* — download iniciado, mas ainda processando no PikPak. Verifique sua conta em alguns minutos.")
         else:
-            lines.append(f":x: *{r['name']}* — erro: {r.get('error', 'desconhecido')}")
+            err = r.get("error", "desconhecido")
+            lines.append(f":x: *{name}* — erro: {err}")
 
     await say(
         text="\n\n".join(lines),
